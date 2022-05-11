@@ -1,0 +1,323 @@
+---
+title: "Final Project Report"
+author: 'Grace Lin (NetID: el3637)'
+date: "5/10/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r message=FALSE, echo=FALSE}
+library(tidyverse)
+library(mltools) #for one-hot-encoding
+library(data.table)
+library(caret) #for KNN
+library(MASS) #for LDA/QDA
+library(randomForest)
+library(tree)
+library(rpart)
+library(pROC)
+library(jtools)
+library(tidyverse)
+library(keras)
+library(fastDummies)
+library(caret)
+library(tensorflow)
+library(kerasR)
+```
+# Introduction
+Clinical trials are the central means by which preventive, diagnostic, and therapeutic strategies are evaluated, but the US clinical trials enterprise has been marked by debate regarding funding priorities for clinical researches. The National Institutes of Health (NIH) and the pharmaceutical industry have been major funders of trials. In general, the pharmaceutical industry funds trials that test their own products, whereas the NIH’s funding strategies are not commercially motivated.
+
+Until recently, however, we have lacked tools for comprehensively assessing trials across the broader US clinical trial enterprise.  In September 2004, the International Committee of Medical Journal Editors (ICMJE) announced the policy of requiring registration of clinical trials as a pre-requisite for publication. The Food and Drug Administration Amendment Act expanded the mandate of ClinicalTrials.ov to include most non-phase1 interventional drug and device trials, with interventional trials defined as "studies" in human beings in which individuals are assigned by an investigator based on a protocol to receive specific interventions. The law obliges sponsors or their designees to register trials and record key data elements, report basic results, and report adverse events. 
+
+With the registry database, we are able to look for the funding strategies of different types of sponsors across different fields of clinical researches. In this study, we hypothesize that the clinical trials funded by NIH has a set of unique characteristics that leads to the NIH's sponsoring in this type of trials. A set of machine learning techniques will be applied to model the NIH's funding behavior in the field of Gastroenterology. 
+
+
+# Related work 
+There had been studies using descriptive statistics to summarize the characteristics of clinical researches in different fields. Those studies would apply simple statistical tests, such as chi-squared test, to validate the differences between NIH-funded and non-NIH-funded trials. There is no existing publication applying more complex statistical methods, such as regression or machine learning algorithms,to analyse the funding trend of clinical trials data. This project, hence, seek to offer a new direction for trend analysis in the clinical trial registry data.
+
+# Methods
+## Data Overview and Objective
+The raw data used was originally obtained from clinical trials registry’s website, it includes all the clinical trials registration information in the field of Gastroenterology(GI), all of them have start dates between 2013 and 2019. The dataset version used for this project has 4182 subjects, and 23 types of information recorded, while majority of them being categorical. With this dataset, I aimed to find any behavioral pattern in federal/government fundings in this area of clinical trials. It is known that NIH is the most common type of federal funding in clinical trials, the objective of this project was finalized as: to model the funding behavior of NIH in GI clinical trials between year 2013-2019, which would be a binary classification machine learning problem.
+
+## Modelling Approaches
+Without knowing the relationships between the variables in the final dataset used, the approaches chosen ranges from simple to more complex algorithms. Started with KNN and logistic regression, of which one is non-parametric and the other being parametric. The difference in output accuracy by the two simple models was of interest. 5-fold cross validation was used to boost the robustness of the two algorithms. Followed by conducting Random Forest, the non-parametric ensemble method chosen that is one of the most inclusive methods for a wide range of data structures. The method would also help revealing the importance of different features and utilize the information during the modelling. The modelling was concluded with applying Neural Network to the dataset, because it is the most robust algorithm in learning and modelling non-linear and complex relationships between the variables.
+
+# Data and Experiment setup
+To achieve the study objective, variable `fund_source_grp`, which stored the information of funding source for each clinical trial, was chosen as the outcome variable. 6 predictors of interest were picked from the raw data, which are the criteria of greatest concern in clinical research, namely the `enrollment`, `intervention.merge`, `phase2`, `intervention.model`, `masking2`, and `purpose`. 
+
+Among the predictors chosen, 5 of them are multi-class categorical variables, and 1 (`enrollment`) is continuous. In order to reduce the complexity of the data, categorical variables were recoded into fewer groups, so as to reduce the noise in the modelling process. Next, the only continuous variable `enrollment`, which is the number of enrolled candidates in the trial, is a highly skewed variable, the value ranged from 1 to 60,000. It was then decided to first standardize it before the modelling process. Last but not least, in order to fit models that address the objective of the project, the output variable was manipulated to a new binary variable called `nih`: with value 1 representing NIH-funded trials and 0 the non-NIH-funded trials.
+
+The resulting variables and groups can be seen below. 
+
+![Reclassified variables](C:\Users\grace\OneDrive - nyu.edu\GU2338 Machine Learning\Final project\v1.png)
+
+However, multi-class categorical variables still exist. Within them, each category does not have an ordinal relationship with each other, hence simply code them into integers is not enough to model their relationship with the outcome variables. To solve this problem, One-hot-encoding technique was used to recode the categorical predictors. This technique recodes each category of the variable into another new variable with binary values. By doing this, the machine learning will not rank one category higher than another unrelated category. At last, the resulting dataset has 14 predictors as shown below. 
+
+```{r echo=FALSE}
+dt_raw <- read.csv("cleaned_data_211213.csv")
+dt <- read.csv("cleaned_data_211213.csv")
+dt <- dt %>% dplyr::select(fund_source_grp, intervention.merge, phase2, enrollment, intervention.model, masking2, purpose)
+dt$intervention.merge <- ifelse(dt$intervention.merge == "drug or biologic", "drug/biologic", "others")
+dt$intervention.model[dt$intervention.model==0] <- "Single"
+dt$intervention.model[dt$intervention.model==1] <- "Parallel/Factorial"
+dt$intervention.model[dt$intervention.model==3] <- "Others"
+dt$masking2[dt$masking2 == 1] <- "Single Blind"
+dt$masking2[dt$masking2 == 0] <- "Open Label"
+dt$masking2[dt$masking2 == 2] <- "Others"
+dt$purpose <- ifelse(dt$purpose == 0, "Treatment", "Others")
+
+#One-hot-encoding
+for (i in c(2:3, 5:7)){dt[,i] <- as.factor(dt[,i])}
+dt$enrollment <- as.numeric(dt$enrollment)
+dt1 <- mltools::one_hot(as.data.table(dt[,-1]))
+
+# Output Grouping: NIH & Non-NIH 
+dt1$nih <- ifelse(dt$fund_source_grp == "IndustryNIHPartnership" 
+                 | dt$fund_source_grp == "NIH&Combos", 1, 0)
+dt1$enrollment <- scale(dt1$enrollment)
+dt1 <- na.omit(dt1)
+```
+
+
+```{r echo=FALSE}
+as.data.frame(colnames(dt1)[-15])
+```
+
+## Trainng and validation set
+```{r echo=FALSE}
+n_all <- nrow(dt1)
+dt1$nih <- as.factor(dt1$nih)
+colnames(dt1) <- make.names(colnames(dt1))
+set.seed(1)
+tr_ind <- sample(n_all, n_all*0.6) #get 60% of data for training
+dt1_train <- dt1[tr_ind, ]
+dt1_test <- dt1[-tr_ind,]
+```
+
+# Results
+### K-Nearest Neighbour and Logistic Regression
+The data was first fitted with KNN and Logit methods. It was found that the optimal K if 23 for KNN. Followed by checking the prediction results. Surprisingly, the two algorithms gave the same classification errors.
+
+
+```{r warning =FALSE, echo=FALSE}
+#knn
+knn.fit <- knn3(nih ~., data = dt1_train, k = 23, prob = TRUE)
+knn.pred <- predict(knn.fit, newdata = dt1_train, type = "prob") #HW3
+pred_label <- ifelse(knn.pred[,2] > 0.5	, "1", "0")
+knn.tr <- mean(pred_label != dt1_train$nih)
+knn.pred.te <- predict(knn.fit, newdata = dt1_test, type = "prob")
+pred_label <- ifelse(knn.pred.te[,2] > 0.5	, "1", "0")
+knn.te <- mean(pred_label != dt1_test$nih)
+
+#logit
+fit_logi <- glm(nih ~., data = dt1_train, family = "binomial")
+pred_train_prob <- predict(fit_logi, type = "response")
+pred_label <- ifelse(pred_train_prob > 0.5	, "1", "0")
+logi.tr <- mean(dt1_train$nih != pred_label)
+pred_test_prob <- predict(fit_logi, newdata = dt1_test, type = "response")
+pred_label <- ifelse(pred_test_prob > 0.5	, "1", "0")
+logi.te <- mean(dt1_test$nih != pred_label)
+
+data.frame(row.names = c("KNN", "Logi"), Train.Error = c(knn.tr, logi.tr), Test.Error = c(knn.te, logi.te))
+```
+This could be due to the imbalanced binary outcome variable we have here, this is almost a 1 to 6 ratio for NIH-funded vs. non-NIH funded clinical trials. The prediction made in both algorithm largely favored the class of non-NIH output, they predicted all the subjects as non-NIH funded, and hence we got the identical errors. By looking at the calibrated probabilities from the prediction, the probabilities are apparently also not normally distributed. An example of the distribution of the prediction probability is shown below.
+
+
+```{r echo=FALSE}
+hist(knn.pred[,2], breaks = 10)
+```
+
+Hence the threshold of 0.5 in determining the class of the output is not desired. In order to improve the model, ROC curves were plotted and the optimal threshold was obtained. 
+
+
+```{r echo=FALSE}
+rocobj_knn <- roc(dt1_train$nih, knn.pred[,2])
+auc_knn <- auc(rocobj_knn)
+rocobj_logi <- roc(dt1_train$nih, pred_train_prob)
+auc_logi <- auc(rocobj_logi)
+
+
+rocobjs <- list(Logistic = rocobj_logi, 
+                KNN = rocobj_knn)
+methods_auc <- paste(c("Logistic","KNN"),
+                     "AUC = ", 
+                     round(c(auc_logi, auc_knn),3))
+
+mytheme <- theme(axis.title = element_text(size = 10),
+        axis.text = element_text(size = 5),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8))
+
+ggroc(rocobjs, size = 1, alpha = 0.8) + 
+  scale_color_discrete(labels = methods_auc) +
+  mytheme
+
+df_thres <- cbind(coords(rocobj_knn, "best", ret = "threshold"),
+coords(rocobj_logi, "best", ret = "threshold"))
+colnames(df_thres) <- c("KNN.opt.threshold", "Logit.opt.threshold")
+df_thres
+```
+
+For KNN, the optimal threshold is 0.11 and it is 0.15 for logit model. After the transformation, errors with threshold adjusted seemed normal, even though the error rate drastically increased. 
+
+```{r echo=FALSE}
+pred_label <- ifelse(knn.pred[,2] > 0.1132479	, "1", "0")
+knn.tr.adj <- mean(pred_label != dt1_train$nih)
+knn.pred.te1 <- ifelse(knn.pred.te[,2] > 0.1132479	, "1", "0")
+knn.te.adj<- mean(knn.pred.te1 != dt1_test$nih)
+
+pred_label <- ifelse(pred_train_prob > 0.1513443	, "1", "0")
+logi.tr.adj<- mean(dt1_train$nih != pred_label)
+pred_label <- ifelse(pred_test_prob > 0.1513443		, "1", "0")
+logi.te.adj<- mean(dt1_test$nih != pred_label)
+
+data.frame(row.names = c("KNN", "Logi"), adj.Train.Error = c(knn.tr.adj, logi.tr.adj), adj.Test.Error = c(knn.te.adj, logi.te.adj))
+```
+
+To make these two models even more robust in their predictions, 5-fold Cross validation was applied, respectively. With cross validation applied, the classification error for KNN improved by around 32.2%, and it was a 0.73% improvement in the Logit model. 
+
+
+```{r echo=FALSE}
+## Split data with 5-fold CV
+K <- 5 
+set.seed(0)
+fold_ind <- sample(1:K, n_all, replace = TRUE)
+
+#CV-KNN 
+knn <- mean(sapply(1:K, function(j){
+  fit_knn <- knn3(nih ~., dt1[fold_ind != j, ], k = 23)
+  knn_prob <- predict(fit_knn, newdata = dt1[fold_ind == j, ], type = "prob")
+  knn_class <- ifelse(knn_prob[,2] >0.17, 1, 0)
+  mean(knn_class != dt1$nih[fold_ind == j])
+}))
+
+#CV-Logit
+logi <- mean(sapply(1:K, function(j){
+  fit_logi <- glm(nih~., data = dt1[fold_ind !=j,], family = "binomial")
+  pred_prob <- predict(fit_logi, newdata = dt1[fold_ind == j, ], 
+                       type = "response")
+  pred_label <- ifelse(pred_prob > 0.144	, "1", "0")
+  mean(dt1$nih[fold_ind == j] != pred_label)
+}))
+impr.knn <- (knn.te-knn)/knn.te
+impr.logi <- (logi.te - logi)/logi.te
+
+data.frame(row.names = c("cv-KNN", "cv-Logi"), Error = c(knn,logi), Improvement = c(impr.knn, impr.logi))
+```
+
+### Random Forest
+With Random Forest applied to model the data, 500 trees were built and the threshold for classification was adjusted according to the ROC curve. The resulted Classification errors are much lower than the previous models, which is more favorable.
+
+
+```{r echo=FALSE}
+rf.type <- randomForest(nih ~., dt1_train, importance = TRUE)
+yhat.rf.tr <- predict(rf.type, newdata = dt1_train, type = "prob")
+
+rocobj_rf <- roc(dt1_train$nih, yhat.rf.tr[,2])
+coords(rocobj_rf, "best", ret = "threshold")
+
+rf.tr.class <- ifelse(yhat.rf.tr[,2] > 0.05, 1, 0)
+tr_rf <- mean(rf.tr.class != dt1_train$nih)
+yhat.rf.te <- predict(rf.type, newdata=dt1_test, type = "prob")
+rf.te.class <- ifelse(yhat.rf.te[,2] > 0.05, 1, 0)
+te_rf <- mean(rf.te.class != dt1_test$nih)
+
+data.frame(row.names = c("Random Forest"), Train.Error = tr_rf, Test.Error = te_rf)
+```
+
+
+Also, information on feature importance in the training process could be obtain from the model. The features that are the most informative in this model are `enrollment`, `early-phase` ( indicating trials in phase 1 or 2), `masking2–Others`, and `late-phase`(trials in phase 3 or 4). 
+
+```{r echo=FALSE}
+feat_imp_df <- importance(rf.type) %>% 
+    data.frame() %>% 
+    mutate(feature = row.names(.)) 
+
+# plot dataframe
+  ggplot(feat_imp_df, aes(x = reorder(feature, MeanDecreaseGini),
+                          y = MeanDecreaseGini)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    theme_classic() +
+    labs(x = "Feature",
+         y = "Importance",
+         title = "Feature Importance: <Model>")
+```
+
+
+### Neural Network
+Lastly, single-layer neural network was applied to model the output. 15 input layer neurons, 10 hidden layer neurons and 2 output neurons were used. The activation function used for Input and Hidden layers is ReLu, while Sigmoid was applied for the Output layer. Adam optimizer was chosen in refining the model. The resulting test error obtained was 0.13, which is also the lowest among all previously fitted models. However, the model could have been underfitted - the loss and accuracy learning plot drawn while fitting the model showed minimal changes and parallel lines for both training and validation sets, indicating a minimal optimization and learning during the modelling. 
+```{r echo=FALSE}
+set.seed(0)
+tr_ind <- sample(nrow(dt1), 2022)
+train_df <- dt1[tr_ind, ]
+test_df <- dt1[-tr_ind, ]
+X_train <- train_df %>% 
+ dplyr::select(-nih) %>% 
+ scale()
+y_train <- keras::to_categorical(train_df[,15])
+X_test <- test_df %>% 
+ dplyr::select(-nih) %>% 
+ scale()
+y_test <- keras::to_categorical(test_df[,15])
+
+model <- keras_model_sequential()
+model%>%
+# Input layer
+ layer_dense(units = 200, activation = "relu", input_shape =  ncol(X_train)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+# Hidden layer
+ layer_dense(units = 140, activation = "relu") %>%
+# Output layer
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 2, activation = "sigmoid")
+ 
+# Network config
+history <- model %>% compile(
+ loss = "binary_crossentropy",
+ optimizer = "adam",
+ metrics = c("accuracy")
+)
+# Running our data
+model %>% fit(
+ X_train, y_train, 
+ epochs = 50, 
+ batch_size = 5,
+ validation_split = 0.3
+)
+summary(model)
+
+#evaluate
+score <- model %>% evaluate(X_test, y_test, verbose = 0)
+cat('Test loss:', score["loss"], "\n")
+cat('Test accuracy:', score["accuracy"], "\n")
+
+#Train error
+class_names = c('0','1')
+pred_prob_tr <- model %>% predict(X_train)
+pred_label_tr <- class_names[apply(pred_prob_tr, 1, which.max)]
+nn.tr <- mean(pred_label_tr != y_train[,2])
+#test error
+pred_prob <- model %>% predict(X_test)
+pred_label <- class_names[apply(pred_prob, 1, which.max)]
+nn.te <- mean(pred_label != y_test[,2])
+data.frame(row.names = c("Neural Network"), Train.Error = nn.tr, Test.Error = nn.te)
+```
+
+
+
+### Model Evaluation
+In order to compare the models fitted, a table compiling the classification errors for each model is shown below. Comparing the testing error, it seems that Neural Network with the lowest error rate should be the best algorithm. However, since the model has a high probability of being undertrained, also the fact that it has a lower testing error than training error is highly suspicious, it is believed that the model fitted using Random Forest should be concluded as the best model instead. It has the lowest training error, showing that the data fitted the model well; also a low testing error, showing its high prediction accuracy. Also, as Random Forest is a simple and non-parametric algorithm - it makes no assumption of our dataset, this characteristic also increases the validity and credibility of this model.
+```{r echo=FALSE}
+data.frame(row.names = c("adj.KNN","adj.Logi","cv-KNN","cv-Logi","Random Forest","Neural Network"), Train.Error = c(knn.tr.adj, logi.tr.adj, NA, NA, tr_rf, nn.tr), Test.Error = c( knn.te.adj, logi.te.adj, knn, logi, te_rf, nn.te)) %>% arrange(Test.Error)
+```
+
+
+
+# Discussion
+With the final model obtained, NIH's funding behavior in the GI clinical trials could be predicted with an accuracy rate of 84.8%. The features that affect the NIH's funding the most are the size of enrollment, the phase, and the masking type of each trial. Moreover, there are some limitations and thoughts for next steps to be addressed. 
+
+Firstly, it is true that One Hot Encoding is an effective data transformation and preprocessing technique that helps our Models understand the data better. However, it also has its setback: the dataset is likely to face the problem of having highly correlated dummy-coded varaibels, which causes multicollinearity. One way to tackle the problem is to drop one of the dummy variable in each original variables. However, subject matter specialist should be consulted and further investigations needed to decide on the class to be dropped. Secondly, it is believed that the parameters, such as the ones in neural network, or the ones in cross validation and the prediction threshold should be tuned to find the optimal values so as to improve the model performances. Lastly, feature selection could be carried out according to the random forest’s measure of feature importance, or other methods such as Lasso or stepwise selection.
